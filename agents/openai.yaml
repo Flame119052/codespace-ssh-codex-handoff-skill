@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codespace Codex Handoff"
+  short_description: "Automate Codespace handoff setup."
+  default_prompt: "Set up this repository for GitHub Codespaces with Tailscale SSH and Codex remote handoff."
