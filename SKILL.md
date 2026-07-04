@@ -1,6 +1,6 @@
 ---
 name: codespace-codex-handoff
-description: Set up a local repository for GitHub Codespaces plus Tailscale SSH plus Codex Desktop/Mobile remote handoff. Use when the user wants a project-specific cloud Codespace that can be reached from Codex on Mac/iPhone, wants local-to-remote Codex handoff like the Guinness Chen X post, wants GitHub repo creation/linking for a local project, or wants startup automation for tailscaled and Codex app-server in a Codespace.
+description: Set up a local repository for GitHub Codespaces plus Tailscale SSH plus Claude Code plus Codex Desktop/Mobile remote handoff. Use when the user wants a project-specific cloud Codespace that can be reached from Codex or Claude on Mac/iPhone, wants local-to-remote Codex handoff like the Guinness Chen X post, wants GitHub repo creation/linking for a local project, or wants startup automation for tailscaled, Claude Code, and Codex app-server in a Codespace.
 ---
 
 # Codespace Codex Handoff
@@ -15,6 +15,7 @@ Use this skill to turn a local project into a Codex-reachable Codespace:
 4. Add or refresh the Codex Desktop SSH remote project at the Codespace path.
 5. Verify with:
    - direct SSH to the Tailscale IP or alias
+   - `claude --version` on the Codespace
    - `codex login status` on the Codespace
    - `codex app-server daemon version`
    - `codex_app.list_projects`
@@ -36,7 +37,7 @@ Run the script with explicit project values:
   --ssh-alias repo-codespace-tailscale
 ```
 
-For fully automatic Tailscale login on first Codespace boot, set `TAILSCALE_AUTHKEY` in the shell before running the script. The script stores it as a GitHub Codespaces secret and never writes it to Git:
+For fully automatic Tailscale login on first Codespace boot, set `TAILSCALE_AUTHKEY` in the shell before running the script. The script stores it as a user-level GitHub Codespaces secret selected for the target repo and never writes it to Git:
 
 ```bash
 export TAILSCALE_AUTHKEY='<tailscale-auth-key>'
@@ -44,22 +45,34 @@ export TAILSCALE_AUTHKEY='<tailscale-auth-key>'
 
 If `TAILSCALE_AUTHKEY` is absent, the script still installs startup automation, but the first Tailscale login may require a manual `tailscale up --ssh --hostname=<name>` or a later secret.
 
-## Codex Login Boundary
+After the Codespace successfully appears in Tailscale, disable key expiry for that device in the Tailscale admin UI if the user wants the host to survive repeated Codespace stop/start cycles without reauth.
 
-The script installs and starts Codex in the Codespace, but ChatGPT login may still require user device auth:
+Do not diagnose the secret by running `echo "$TAILSCALE_AUTHKEY"` inside a later `gh codespace ssh` shell. Codespaces secrets are available to lifecycle commands such as `postStartCommand`, but they may not be visible in later interactive shells.
+
+## Claude and Codex Login Boundaries
+
+The script installs Claude Code and Codex in the Codespace, but both may still require user authentication:
 
 ```bash
+claude
 codex login --device-auth
 ```
 
-If the remote prints a device URL/code, present it to the user and wait. After they say done, verify:
+If `claude` asks for browser login, or if the remote prints a device URL/code for Codex, present it to the user and wait. After they say done, verify:
 
 ```bash
+claude --version
 codex login status
 codex app-server daemon version
 ```
 
 Do not claim the system is complete until remote Codex login and daemon status are verified.
+
+## Codespace Rebuild Rule
+
+Changes to `.devcontainer/devcontainer.json` or `.devcontainer/codespace-startup.sh` require a Codespace rebuild. A stop/start is enough only after those files are already present in the built container.
+
+After stopping a Codespace, wait 3-4 minutes before starting or rebuilding again. GitHub can leave the Codespace in a transitional state if repeated start/stop/rebuild requests are sent too quickly.
 
 ## IntelliJ IDEA Link
 
@@ -87,3 +100,13 @@ Use the final Codespace project path:
 ```
 
 Avoid adding a second saved remote project for local-looking symlinks like `/Users/<name>/Documents/<RepoName>` unless the user explicitly asks; duplicates confuse Codex Desktop/Mobile.
+
+## Tailscale Node Name Recovery
+
+If a rebuilt Codespace appears as `<name>-1` in Tailscale, there is usually a stale offline machine still holding `<name>`. Delete the stale offline machine in the Tailscale admin UI, then run this on the Codespace:
+
+```bash
+sudo tailscale up --ssh --hostname=<name> --accept-dns=false --operator="$USER"
+```
+
+The `--operator` flag matters. Once a node has that non-default setting, later `tailscale up` calls must include it or Tailscale can reject the update.

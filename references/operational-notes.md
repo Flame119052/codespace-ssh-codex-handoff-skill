@@ -2,10 +2,32 @@
 
 ## Auth Boundaries
 
-- Tailscale can be automated with a reusable auth key stored as the GitHub Codespaces secret `TAILSCALE_AUTHKEY`.
+- Tailscale can be automated with a reusable auth key stored as a user-level GitHub Codespaces secret named `TAILSCALE_AUTHKEY`, selected for the target repo.
 - Do not commit Tailscale keys, OpenAI/Codex auth, SSH private keys, or GitHub tokens.
+- Claude Code installation is automated; first login may still require `claude` interactive auth.
 - Codex ChatGPT login is usually device-code based. Stop and present the device URL/code when required.
 - Verify remote login with `codex login status`; "daemon running" is not enough.
+- After the device appears in Tailscale, disable key expiry for that device if the user wants persistent stop/start behavior.
+
+## Tailscale Startup Caveats
+
+- Devcontainer changes require a Codespace rebuild. A normal stop/start only uses startup files that already exist in the built Codespace.
+- Wait 3-4 minutes after stopping a Codespace before starting or rebuilding. GitHub can remain in a transitional state after shutdown.
+- `TAILSCALE_AUTHKEY` may be available to `postStartCommand` while not being visible in a later interactive `gh codespace ssh` shell. Do not treat a missing shell env var as proof that startup could not use the secret.
+- Use a user-level Codespaces secret selected for the repo:
+
+```bash
+printf '%s' "$TAILSCALE_AUTHKEY" | gh secret set TAILSCALE_AUTHKEY --user --app codespaces --repos OWNER/REPO
+gh api user/codespaces/secrets/TAILSCALE_AUTHKEY/repositories
+```
+
+- If Tailscale creates `<name>-1`, delete the stale offline `<name>` machine in the Tailscale admin UI, then rerun:
+
+```bash
+sudo tailscale up --ssh --hostname=<name> --accept-dns=false --operator="$USER"
+```
+
+- Include `--operator="$USER"` in repeated `tailscale up` calls. Tailscale can reject updates when a previous non-default operator setting is omitted.
 
 ## Phone Password
 

@@ -23,7 +23,8 @@ Options:
   -h, --help                 Show help.
 
 Environment:
-  TAILSCALE_AUTHKEY          Optional. Stored as repo Codespaces secret TAILSCALE_AUTHKEY.
+  TAILSCALE_AUTHKEY          Optional. Stored as a user-level Codespaces secret
+                             named TAILSCALE_AUTHKEY, selected for OWNER/REPO.
 EOF
 }
 
@@ -94,6 +95,22 @@ set -uo pipefail
 log() { printf '[codespace-startup] %s\n' "$*"; }
 
 start_tailscale() {
+  ensure_tailscale() {
+    if command -v tailscaled >/dev/null 2>&1 && command -v tailscale >/dev/null 2>&1; then
+      return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+      log "curl is not installed; cannot install tailscale"
+      return 1
+    fi
+
+    log "installing Tailscale"
+    curl -fsSL https://tailscale.com/install.sh | sh
+  }
+
+  ensure_tailscale || return 0
+
   if ! command -v tailscaled >/dev/null 2>&1 || ! command -v tailscale >/dev/null 2>&1; then
     log "tailscale is not installed; skipping"
     return 0
@@ -101,7 +118,11 @@ start_tailscale() {
 
   sudo mkdir -p /var/lib/tailscale /var/run/tailscale
 
-  if ! tailscale status --self >/dev/null 2>&1; then
+  if ! pgrep -x tailscaled >/dev/null 2>&1; then
+    sudo rm -f /var/run/tailscale/tailscaled.sock
+  fi
+
+  if ! pgrep -x tailscaled >/dev/null 2>&1; then
     log "starting tailscaled"
     sudo nohup tailscaled \
       --state=/var/lib/tailscale/tailscaled.state \
@@ -113,6 +134,14 @@ start_tailscale() {
   sudo tailscale set --operator="$USER" >/dev/null 2>&1 || true
 
   if tailscale status --self >/dev/null 2>&1; then
+    host="${CODESPACE_NAME:-codespace}"
+    host="${host%%.*}"
+    sudo tailscale up \
+      --ssh \
+      --hostname="$host" \
+      --accept-dns=false \
+      --operator="$USER" \
+      >/dev/null 2>&1 || true
     log "tailscale is running"
     return 0
   fi
@@ -125,9 +154,10 @@ start_tailscale() {
       --authkey="$TAILSCALE_AUTHKEY" \
       --ssh \
       --hostname="$host" \
-      --accept-dns=false
+      --accept-dns=false \
+      --operator="$USER"
   else
-    log "tailscale is not authenticated; set repo Codespaces secret TAILSCALE_AUTHKEY or run tailscale up manually"
+    log "tailscale is not authenticated; set user-level Codespaces secret TAILSCALE_AUTHKEY selected for this repo or run tailscale up manually"
   fi
 }
 
@@ -143,7 +173,27 @@ ensure_codex() {
   log "codex app-server daemon requested"
 }
 
+ensure_claude_code() {
+  export PATH="$HOME/.local/bin:$PATH"
+
+  if command -v claude >/dev/null 2>&1; then
+    log "Claude Code is already installed"
+    return 0
+  fi
+
+  log "installing Claude Code CLI"
+  curl -fsSL https://claude.ai/install.sh | bash
+  export PATH="$HOME/.local/bin:$PATH"
+
+  if command -v claude >/dev/null 2>&1; then
+    log "Claude Code installed"
+  else
+    log "Claude Code install finished but claude is not yet on PATH"
+  fi
+}
+
 start_tailscale
+ensure_claude_code
 ensure_codex
 EOF
 chmod +x .devcontainer/codespace-startup.sh
@@ -192,10 +242,10 @@ branch="$(git branch --show-current)"
 git push -u origin "$branch"
 
 if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
-  log "storing TAILSCALE_AUTHKEY as GitHub Codespaces secret"
-  gh secret set TAILSCALE_AUTHKEY -R "$github_repo" --app codespaces --body "$TAILSCALE_AUTHKEY"
+  log "storing TAILSCALE_AUTHKEY as user-level GitHub Codespaces secret selected for $github_repo"
+  printf '%s' "$TAILSCALE_AUTHKEY" | gh secret set TAILSCALE_AUTHKEY --user --app codespaces --repos "$github_repo"
 else
-  log "TAILSCALE_AUTHKEY not set; first Tailscale auth may require manual login"
+  log "TAILSCALE_AUTHKEY not set; first Tailscale auth may require manual login or a later user-level Codespaces secret"
 fi
 
 if [ "$create_codespace" = "true" ]; then
@@ -223,14 +273,22 @@ Codex Desktop remote project:
   remote path:  /workspaces/$repo_name
 
 After the Codespace starts, verify with:
-  gh codespace ssh -c "$codespace_name" -- 'tailscale ip -4; codex login status; codex app-server daemon version'
+  gh codespace ssh -c "$codespace_name" -- 'tailscale ip -4; claude --version; codex login status; codex app-server daemon version'
 
-If Codex says "Not logged in", run:
+If Claude or Codex says it needs login, run:
+  gh codespace ssh -c "$codespace_name" -- 'claude'
   gh codespace ssh -c "$codespace_name" -- 'codex login --device-auth'
 
 If Tailscale prints a new IP, configure local SSH alias "$ssh_alias" to use that IP with:
   User codespace
   Port 22
   HostName <tailscale-ip>
+
+If Tailscale does not authenticate after rebuild:
+  1. Confirm TAILSCALE_AUTHKEY is a user-level Codespaces secret selected for $github_repo.
+  2. Do not rely on echoing TAILSCALE_AUTHKEY in an interactive gh codespace ssh shell; lifecycle commands can receive Codespaces secrets even when later SSH shells do not show them.
+  3. Rebuild the Codespace after devcontainer changes and wait 3-4 minutes after stopping before starting again.
+  4. If Tailscale names the node <name>-1, delete the stale offline node in Tailscale, then rerun:
+     sudo tailscale up --ssh --hostname=<name> --accept-dns=false --operator=codespace
 
 EOF
