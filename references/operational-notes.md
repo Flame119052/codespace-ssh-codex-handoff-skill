@@ -11,27 +11,30 @@
 
 ## Tailscale Startup Caveats
 
+- Use Tailscale for private networking, but use regular OpenSSH on port `2222` for Codex Desktop/Mobile. Do not use Tailscale SSH for the Codex remote host; Codex runs an interactive login shell without a TTY during probing, and Tailscale SSH can leave Bash stopped.
 - Devcontainer changes require a Codespace rebuild. A normal stop/start only uses startup files that already exist in the built Codespace.
 - Wait 3-4 minutes after stopping a Codespace before starting or rebuilding. GitHub can remain in a transitional state after shutdown.
 - `TAILSCALE_AUTHKEY` may be available to `postStartCommand` while not being visible in a later interactive `gh codespace ssh` shell. Do not treat a missing shell env var as proof that startup could not use the secret.
-- Use a user-level Codespaces secret selected for the repo:
+- Use user-level Codespaces secrets selected for the repo:
 
 ```bash
 printf '%s' "$TAILSCALE_AUTHKEY" | gh secret set TAILSCALE_AUTHKEY --user --app codespaces --repos OWNER/REPO
+printf '%s' "$CODEX_SSH_PASSWORD" | gh secret set CODEX_SSH_PASSWORD --user --app codespaces --repos OWNER/REPO
+gh secret set CODEX_SSH_AUTHORIZED_KEY --user --app codespaces --repos OWNER/REPO < ~/.ssh/codespaces.auto.pub
 gh api user/codespaces/secrets/TAILSCALE_AUTHKEY/repositories
 ```
 
 - If Tailscale creates `<name>-1`, delete the stale offline `<name>` machine in the Tailscale admin UI, then rerun:
 
 ```bash
-sudo tailscale up --ssh --hostname=<name> --accept-dns=false --operator="$USER"
+sudo tailscale up --reset --hostname=<name> --accept-dns=false --operator="$USER"
 ```
 
-- Include `--operator="$USER"` in repeated `tailscale up` calls. Tailscale can reject updates when a previous non-default operator setting is omitted.
+- Include `--operator="$USER"` in repeated `tailscale up` calls. Use `--reset` when removing prior non-default flags such as `--ssh`.
 
 ## Phone Password
 
-With Tailscale SSH, the SSH password field in Codex Mobile may be ignored. If the UI requires non-empty text, use a harmless placeholder such as `codespace`; authorization is handled by Tailscale identity, not that password.
+With OpenSSH over Tailscale, use the Codespace Linux user `codespace`, port `2222`, and the value from `CODEX_SSH_PASSWORD`. The host is the Tailscale IP or MagicDNS name. Tailscale must be connected on the phone so the private host is reachable.
 
 ## Master Branch vs Worktrees
 

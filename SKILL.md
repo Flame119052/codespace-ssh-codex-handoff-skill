@@ -1,13 +1,13 @@
 ---
 name: codespace-codex-handoff
-description: Set up a local repository for GitHub Codespaces plus Tailscale SSH plus Claude Code plus Codex Desktop/Mobile remote handoff. Use when the user wants a project-specific cloud Codespace that can be reached from Codex or Claude on Mac/iPhone, wants local-to-remote Codex handoff like the Guinness Chen X post, wants GitHub repo creation/linking for a local project, or wants startup automation for tailscaled, Claude Code, and Codex app-server in a Codespace.
+description: Set up a local repository for GitHub Codespaces plus Tailscale-networked OpenSSH plus Claude Code plus Codex Desktop/Mobile remote handoff. Use when the user wants a project-specific cloud Codespace that can be reached from Codex or Claude on Mac/iPhone, wants local-to-remote Codex handoff like the Guinness Chen X post, wants GitHub repo creation/linking for a local project, or wants startup automation for tailscaled, OpenSSH, Claude Code, and Codex app-server in a Codespace.
 ---
 
 # Codespace Codex Handoff
 
 ## Core Workflow
 
-Use this skill to turn a local project into a Codex-reachable Codespace:
+Use this skill to turn a local project into a Codex-reachable Codespace. Use regular OpenSSH over the Tailscale network on port `2222`; do not use Tailscale SSH for Codex Desktop/Mobile handoff because Codex's remote probe uses an interactive login shell without a TTY and Tailscale SSH can leave that shell stopped.
 
 1. Confirm the target local repo path and GitHub repo name.
 2. Run `scripts/setup_codespace_handoff.sh` from this skill.
@@ -41,6 +41,12 @@ For fully automatic Tailscale login on first Codespace boot, set `TAILSCALE_AUTH
 
 ```bash
 export TAILSCALE_AUTHKEY='<tailscale-auth-key>'
+```
+
+For phone password login to OpenSSH, set `CODEX_SSH_PASSWORD` before running the script. The script stores it as a user-level Codespaces secret selected for the target repo:
+
+```bash
+export CODEX_SSH_PASSWORD='choose-a-strong-password'
 ```
 
 If `TAILSCALE_AUTHKEY` is absent, the script still installs startup automation, but the first Tailscale login may require a manual `tailscale up --ssh --hostname=<name>` or a later secret.
@@ -106,7 +112,7 @@ Avoid adding a second saved remote project for local-looking symlinks like `/Use
 If a rebuilt Codespace appears as `<name>-1` in Tailscale, there is usually a stale offline machine still holding `<name>`. Delete the stale offline machine in the Tailscale admin UI, then run this on the Codespace:
 
 ```bash
-sudo tailscale up --ssh --hostname=<name> --accept-dns=false --operator="$USER"
+sudo tailscale up --reset --hostname=<name> --accept-dns=false --operator="$USER"
 ```
 
-The `--operator` flag matters. Once a node has that non-default setting, later `tailscale up` calls must include it or Tailscale can reject the update.
+The `--operator` flag matters. Use `--reset` when removing stale non-default flags such as `--ssh`.

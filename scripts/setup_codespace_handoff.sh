@@ -25,6 +25,8 @@ Options:
 Environment:
   TAILSCALE_AUTHKEY          Optional. Stored as a user-level Codespaces secret
                              named TAILSCALE_AUTHKEY, selected for OWNER/REPO.
+  CODEX_SSH_PASSWORD         Optional. Stored as a user-level Codespaces secret
+                             for phone password auth to OpenSSH on port 2222.
 EOF
 }
 
@@ -137,7 +139,6 @@ start_tailscale() {
     host="${CODESPACE_NAME:-codespace}"
     host="${host%%.*}"
     sudo tailscale up \
-      --ssh \
       --hostname="$host" \
       --accept-dns=false \
       --operator="$USER" \
@@ -152,13 +153,33 @@ start_tailscale() {
     log "authenticating tailscale as ${host}"
     sudo tailscale up \
       --authkey="$TAILSCALE_AUTHKEY" \
-      --ssh \
       --hostname="$host" \
       --accept-dns=false \
       --operator="$USER"
   else
     log "tailscale is not authenticated; set user-level Codespaces secret TAILSCALE_AUTHKEY selected for this repo or run tailscale up manually"
   fi
+}
+
+ensure_ssh_access() {
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  touch "$HOME/.ssh/authorized_keys"
+  chmod 600 "$HOME/.ssh/authorized_keys"
+
+  if [ -n "${CODEX_SSH_AUTHORIZED_KEY:-}" ] && ! grep -qxF "$CODEX_SSH_AUTHORIZED_KEY" "$HOME/.ssh/authorized_keys"; then
+    printf '%s\n' "$CODEX_SSH_AUTHORIZED_KEY" >> "$HOME/.ssh/authorized_keys"
+  fi
+
+  if [ -n "${CODEX_SSH_PASSWORD:-}" ]; then
+    printf 'codespace:%s\n' "$CODEX_SSH_PASSWORD" | sudo chpasswd
+    sudo sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sudo sed -i 's/^#\?KbdInteractiveAuthentication .*/KbdInteractiveAuthentication yes/' /etc/ssh/sshd_config
+  fi
+
+  sudo sed -i 's/^#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+  sudo service ssh restart >/dev/null 2>&1 || sudo /etc/init.d/ssh restart >/dev/null 2>&1 || sudo pkill -HUP sshd || true
+  log "OpenSSH access configured on port 2222"
 }
 
 ensure_codex() {
@@ -192,9 +213,23 @@ ensure_claude_code() {
   fi
 }
 
+link_cli_tools() {
+  if [ -x "$HOME/.codex/packages/standalone/current/bin/codex" ]; then
+    sudo ln -sf "$HOME/.codex/packages/standalone/current/bin/codex" /usr/local/bin/codex
+  fi
+
+  if [ -x "$HOME/.local/bin/claude" ]; then
+    sudo ln -sf "$HOME/.local/bin/claude" /usr/local/bin/claude
+  fi
+
+  log "CLI tools linked into /usr/local/bin"
+}
+
 start_tailscale
+ensure_ssh_access
 ensure_claude_code
 ensure_codex
+link_cli_tools
 EOF
 chmod +x .devcontainer/codespace-startup.sh
 
@@ -248,6 +283,16 @@ else
   log "TAILSCALE_AUTHKEY not set; first Tailscale auth may require manual login or a later user-level Codespaces secret"
 fi
 
+if [ -n "${CODEX_SSH_PASSWORD:-}" ]; then
+  log "storing CODEX_SSH_PASSWORD as user-level GitHub Codespaces secret selected for $github_repo"
+  printf '%s' "$CODEX_SSH_PASSWORD" | gh secret set CODEX_SSH_PASSWORD --user --app codespaces --repos "$github_repo"
+fi
+
+if [ -f "$HOME/.ssh/codespaces.auto.pub" ]; then
+  log "storing CODEX_SSH_AUTHORIZED_KEY as user-level GitHub Codespaces secret selected for $github_repo"
+  gh secret set CODEX_SSH_AUTHORIZED_KEY --user --app codespaces --repos "$github_repo" < "$HOME/.ssh/codespaces.auto.pub"
+fi
+
 if [ "$create_codespace" = "true" ]; then
   args=(codespace create -R "$github_repo" -b "$branch" --display-name "$codespace_name" --machine "$machine" --idle-timeout "$idle_timeout" --retention-period "$retention_period" --default-permissions)
   if [ -n "$location" ]; then
@@ -281,7 +326,7 @@ If Claude or Codex says it needs login, run:
 
 If Tailscale prints a new IP, configure local SSH alias "$ssh_alias" to use that IP with:
   User codespace
-  Port 22
+  Port 2222
   HostName <tailscale-ip>
 
 If Tailscale does not authenticate after rebuild:
@@ -289,6 +334,6 @@ If Tailscale does not authenticate after rebuild:
   2. Do not rely on echoing TAILSCALE_AUTHKEY in an interactive gh codespace ssh shell; lifecycle commands can receive Codespaces secrets even when later SSH shells do not show them.
   3. Rebuild the Codespace after devcontainer changes and wait 3-4 minutes after stopping before starting again.
   4. If Tailscale names the node <name>-1, delete the stale offline node in Tailscale, then rerun:
-     sudo tailscale up --ssh --hostname=<name> --accept-dns=false --operator=codespace
+     sudo tailscale up --reset --hostname=<name> --accept-dns=false --operator=codespace
 
 EOF
