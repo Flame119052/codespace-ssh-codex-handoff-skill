@@ -46,6 +46,20 @@ fatal: '<branch>' is already used by worktree at '/workspaces/<RepoName>'
 
 Use worktree-backed Codex threads for handoff. If the user insists on direct `master`, start the thread directly on the remote project instead of handing off a local thread into another worktree.
 
+## Matching Saved Projects For Handoff
+
+If `list_projects` shows the remote project but `handoff_thread` still returns `No matching saved project was found`, match the remote saved project path to the local absolute path. For example, local Lira is `/Users/krishay/Documents/Lira`, while a Codespace checkout is normally `/workspaces/Lira`.
+
+On the remote host, create a Mac-compatible path alias:
+
+```bash
+sudo mkdir -p /Users/krishay/Documents
+sudo chown -R "$USER:$USER" /Users/krishay
+ln -sfn /workspaces/Lira /Users/krishay/Documents/Lira
+```
+
+Then save the remote Codex project as `/Users/krishay/Documents/Lira` instead of `/workspaces/Lira` and restart Codex Desktop so it reloads the saved project path. A running app may keep reporting the old path until restart.
+
 ## Duplicate Remote Projects
 
 Keep one remote project per Codespace:
